@@ -53,12 +53,7 @@ public sealed class WorkerService(
             config.Namespace,
             config.TaskQueue);
 
-        var client = await TemporalClient.ConnectAsync(new(config.Address)
-        {
-            Namespace = config.Namespace,
-            Runtime = runtime,
-            LoggerFactory = loggerFactory,
-        });
+        var client = await ConnectWithRetryAsync(stoppingToken);
 
         var options = new TemporalWorkerOptions(config.TaskQueue)
         {
@@ -78,5 +73,54 @@ public sealed class WorkerService(
         // Returns a task that only ever faults. A clean shutdown surfaces as
         // cancellation, which ExecuteAsync above turns back into a normal stop.
         await worker.ExecuteAsync(stoppingToken);
+    }
+
+    /// <summary>
+    /// Connects, retrying with backoff.
+    ///
+    /// ConnectAsync does not retry the initial connection, and compose does not
+    /// re-evaluate depends_on when a container restarts. So a worker that restarts
+    /// while the server is briefly unavailable would die immediately and keep dying.
+    /// Attempts are bounded so a genuinely wrong address still fails the process
+    /// rather than retrying forever against something that will never answer.
+    /// </summary>
+    private async Task<ITemporalClient> ConnectWithRetryAsync(CancellationToken cancel)
+    {
+        var delay = TimeSpan.FromSeconds(1);
+        var maxDelay = TimeSpan.FromSeconds(15);
+
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await TemporalClient.ConnectAsync(new(config.Address)
+                {
+                    Namespace = config.Namespace,
+                    Runtime = runtime,
+                    LoggerFactory = loggerFactory,
+                });
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                if (attempt >= config.ConnectAttempts)
+                {
+                    logger.LogError(
+                        "Could not reach {Address} after {Attempts} attempts",
+                        config.Address,
+                        attempt);
+                    throw;
+                }
+
+                logger.LogWarning(
+                    "Connect attempt {Attempt} of {Total} failed ({Reason}); retrying in {Delay}",
+                    attempt,
+                    config.ConnectAttempts,
+                    ex.Message,
+                    delay);
+
+                await Task.Delay(delay, cancel);
+                delay = TimeSpan.FromTicks(Math.Min(delay.Ticks * 2, maxDelay.Ticks));
+            }
+        }
     }
 }

@@ -121,6 +121,25 @@ services:
     networks:
       - sandbox
 
+  worker:
+    build:
+      # The repo root, so the build can see the solution's project files.
+      context: ..
+      dockerfile: docker/worker.Dockerfile
+    depends_on:
+      # Not just the server being healthy. The worker's first action is to connect
+      # and poll, and TemporalClient.ConnectAsync does not retry the initial
+      # connection, so it waits until the namespace is actually registered.
+      temporal-namespace:
+        condition: service_completed_successfully
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE}
+      TEMPORAL_TASK_QUEUE: ${TEMPORAL_TASK_QUEUE}
+    restart: unless-stopped
+    networks:
+      - sandbox
+
 networks:
   sandbox:
 

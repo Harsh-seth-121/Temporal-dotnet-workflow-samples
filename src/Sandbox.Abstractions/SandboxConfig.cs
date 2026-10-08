@@ -9,12 +9,19 @@ namespace Sandbox.Abstractions;
 public sealed record SandboxConfig(
     string Address,
     string Namespace,
-    string TaskQueue)
+    string TaskQueue,
+    int ConnectAttempts)
 {
     public static SandboxConfig FromEnvironment() => new(
         Address: Get("TEMPORAL_ADDRESS", "localhost:7233"),
         Namespace: Get("TEMPORAL_NAMESPACE", "default"),
-        TaskQueue: Get("TEMPORAL_TASK_QUEUE", "sandbox"));
+        TaskQueue: Get("TEMPORAL_TASK_QUEUE", "sandbox"),
+        ConnectAttempts: GetInt("TEMPORAL_CONNECT_ATTEMPTS", 10));
+
+    private static int GetInt(string key, int fallback) =>
+        int.TryParse(Environment.GetEnvironmentVariable(key), out var value) && value > 0
+            ? value
+            : fallback;
 
     private static string Get(string key, string fallback)
     {
