@@ -1,0 +1,128 @@
+# Self-contained local Temporal deployment.
+#
+# Deliberately omitted, and why:
+#   - no `version:` key          obsolete in Compose v2+, warns and is ignored
+#   - no `container_name:`       escapes the project namespace and collides across projects
+#   - no `name:` on the network  same problem; it would survive `down` as a global network
+#   - no anonymous volumes       they linger unlabeled while the stack runs
+#
+# The project name comes from COMPOSE_PROJECT_NAME in .env. Without it the project
+# would be named after this directory and `make reset` would miss the volumes.
+
+services:
+  postgresql:
+    image: postgres:${POSTGRES_VERSION}
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${PORT_POSTGRES}:5432"
+    volumes:
+      - postgresql-data:/var/lib/postgresql/data
+    healthcheck:
+      # -U matters: pg_isready defaults to the OS user, which is root in this image.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - sandbox
+
+  # One-shot. Creates and migrates the temporal and temporal_visibility databases,
+  # then exits 0. The server waits on its successful completion.
+  temporal-setup:
+    image: temporalio/admin-tools:${TEMPORAL_VERSION}
+    # Marks this as a run-once container. scripts/wait-healthy.sh requires labelled
+    # services to reach exit 0 rather than accepting "still running" as settled.
+    labels:
+      sandbox.lifecycle: oneshot
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    environment:
+      POSTGRES_SEEDS: postgresql
+      POSTGRES_USER: ${POSTGRES_USER}
+      # temporal-sql-tool reads the password from SQL_PASSWORD, not POSTGRES_PWD.
+      SQL_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_PORT: 5432
+    volumes:
+      - ./temporal:/scripts:ro
+    entrypoint: ["/bin/sh", "/scripts/setup-schema.sh"]
+    restart: "no"
+    networks:
+      - sandbox
+
+  temporal:
+    image: temporalio/server:${TEMPORAL_VERSION}
+    depends_on:
+      temporal-setup:
+        condition: service_completed_successfully
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PWD: ${POSTGRES_PASSWORD}
+      POSTGRES_SEEDS: postgresql
+      # Without this the config template binds 127.0.0.1 and the container is
+      # unreachable from every other container and from the host.
+      BIND_ON_IP: 0.0.0.0
+      NUM_HISTORY_SHARDS: ${NUM_HISTORY_SHARDS}
+      # Relative to WORKDIR /etc/temporal, so this resolves under the mount below.
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+    ports:
+      - "${PORT_TEMPORAL_GRPC}:7233"
+    volumes:
+      - ./temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
+    healthcheck:
+      # The image has nc but no curl. This only proves the port is open, which is
+      # why create-namespace.sh retries rather than trusting it.
+      test: ["CMD", "nc", "-z", "localhost", "7233"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - sandbox
+
+  # One-shot. Registers the namespace once the server is accepting connections.
+  temporal-namespace:
+    image: temporalio/admin-tools:${TEMPORAL_VERSION}
+    labels:
+      sandbox.lifecycle: oneshot
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE}
+      TEMPORAL_RETENTION: ${TEMPORAL_RETENTION}
+    volumes:
+      - ./temporal:/scripts:ro
+    entrypoint: ["/bin/sh", "/scripts/create-namespace.sh"]
+    restart: "no"
+    networks:
+      - sandbox
+
+  temporal-ui:
+    image: temporalio/ui:${TEMPORAL_UI_VERSION}
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      # The UI loads but shows no data if the browser origin is not allowed here.
+      TEMPORAL_CORS_ORIGINS: http://localhost:${PORT_TEMPORAL_UI}
+    ports:
+      - "${PORT_TEMPORAL_UI}:8080"
+    restart: unless-stopped
+    networks:
+      - sandbox
+
+networks:
+  sandbox:
+
+volumes:
+  postgresql-data:
