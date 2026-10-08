@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Sandbox.Samples.Hello.Tests</RootNamespace>
+    <!-- The .NET 10 SDK dropped VSTest support from `dotnet test`. xunit.v3 runs on
+         Microsoft.Testing.Platform instead, which this opts into. -->
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Sandbox.Samples.Hello/Sandbox.Samples.Hello.csproj" />
+  </ItemGroup>
+
+</Project>

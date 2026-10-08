@@ -1,0 +1,47 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+indent_style = space
+trim_trailing_whitespace = true
+
+[*.{cs,csproj,props,targets}]
+indent_size = 4
+
+[*.{json,yml,yaml}]
+indent_size = 2
+
+[Makefile]
+indent_style = tab
+
+[*.sh]
+indent_size = 4
+
+# Workflow code breaks several analyzer rules by design. Scoping the waivers to
+# the .workflow.cs extension keeps them off ordinary code, so an accidental
+# ConfigureAwait in an activity still gets flagged.
+[*.workflow.cs]
+
+# Queries are methods, not properties.
+dotnet_diagnostic.CA1024.severity = none
+
+# Workflow members are instance members even when they look static.
+dotnet_diagnostic.CA1822.severity = none
+
+# ConfigureAwait(false) leaves the deterministic scheduler and must not be used.
+dotnet_diagnostic.CA2007.severity = none
+
+# Workflows must not pass an explicit TaskScheduler.
+dotnet_diagnostic.CA2008.severity = none
+
+# Workflow randomness is seeded by the SDK and is deterministic on replay.
+dotnet_diagnostic.CA5394.severity = none
+
+# An async workflow method with no await is legitimate.
+dotnet_diagnostic.CS1998.severity = none
+
+# Workflows should not be pushed toward the async variants these rules suggest.
+dotnet_diagnostic.VSTHRD103.severity = none
+dotnet_diagnostic.VSTHRD105.severity = none

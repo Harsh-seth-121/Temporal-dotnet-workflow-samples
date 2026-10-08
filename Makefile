@@ -4,7 +4,7 @@ ENV_EXAMPLE  := deploy/.env.example
 COMPOSE      := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE)
 
 .DEFAULT_GOAL := help
-.PHONY: help up down reset logs ps env
+.PHONY: help up down reset logs ps env build test run worker
 
 help: ## Show available targets
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  %-8s %s\n", $$1, $$2}'
@@ -44,3 +44,15 @@ logs: ## Follow logs from every service
 
 ps: ## Show service status
 	$(COMPOSE) ps
+
+build: ## Build the solution
+	dotnet build
+
+test: ## Run the test suite
+	dotnet test
+
+run: ## Start one HelloWorkflow and print the result
+	@dotnet run --project src/Sandbox.Client -- "$(NAME)"
+
+worker: ## Run the worker on the host against the containerized server
+	dotnet run --project src/Sandbox.Worker
