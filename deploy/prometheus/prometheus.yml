@@ -1,0 +1,36 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+storage:
+  tsdb:
+    retention:
+      # This box gets reset constantly, so the 15 day default would only ever
+      # hold samples from a stack that no longer exists.
+      #
+      # Prometheus 3 deprecated the --storage.tsdb.retention.* flags in favour of
+      # this field, so setting it on the command line warns instead of applying.
+      time: 6h
+
+scrape_configs:
+  # Targets use compose service names and container-internal ports. The published
+  # host ports are irrelevant between containers, and host.docker.internal only
+  # works on Docker Desktop.
+  - job_name: temporal-server
+    static_configs:
+      - targets: ['temporal:8000']
+        labels:
+          group: server
+    # All four server roles share one registry and one endpoint in a
+    # single-container deployment. They are separated by the service_name label,
+    # whose values are frontend, history, matching and worker.
+
+  - job_name: temporal-dotnet-worker
+    static_configs:
+      - targets: ['worker:9464']
+        labels:
+          group: sdk
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']

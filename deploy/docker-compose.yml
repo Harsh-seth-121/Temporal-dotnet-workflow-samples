@@ -9,6 +9,10 @@
 # The project name comes from COMPOSE_PROJECT_NAME in .env. Without it the project
 # would be named after this directory and `make reset` would miss the volumes.
 
+# Every port below is published on 127.0.0.1 rather than all interfaces. Compose
+# defaults to 0.0.0.0, which on a laptop puts Postgres (password `temporal`), the
+# Prometheus API, and both metrics endpoints on the local network.
+
 services:
   postgresql:
     image: postgres:${POSTGRES_VERSION}
@@ -16,7 +20,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
-      - "${PORT_POSTGRES}:5432"
+      - "127.0.0.1:${PORT_POSTGRES}:5432"
     volumes:
       - postgresql-data:/var/lib/postgresql/data
     healthcheck:
@@ -69,10 +73,14 @@ services:
       # unreachable from every other container and from the host.
       BIND_ON_IP: 0.0.0.0
       NUM_HISTORY_SHARDS: ${NUM_HISTORY_SHARDS}
+      # One endpoint serves all four roles in this single-container
+      # deployment; the service_name label separates them.
+      PROMETHEUS_ENDPOINT: 0.0.0.0:8000
       # Relative to WORKDIR /etc/temporal, so this resolves under the mount below.
       DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
     ports:
-      - "${PORT_TEMPORAL_GRPC}:7233"
+      - "127.0.0.1:${PORT_TEMPORAL_GRPC}:7233"
+      - "127.0.0.1:${PORT_TEMPORAL_METRICS}:8000"
     volumes:
       - ./temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
     healthcheck:
@@ -116,7 +124,7 @@ services:
       # The UI loads but shows no data if the browser origin is not allowed here.
       TEMPORAL_CORS_ORIGINS: http://localhost:${PORT_TEMPORAL_UI}
     ports:
-      - "${PORT_TEMPORAL_UI}:8080"
+      - "127.0.0.1:${PORT_TEMPORAL_UI}:8080"
     restart: unless-stopped
     networks:
       - sandbox
@@ -136,6 +144,72 @@ services:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE}
       TEMPORAL_TASK_QUEUE: ${TEMPORAL_TASK_QUEUE}
+      WORKER_METRICS_ADDRESS: 0.0.0.0:9464
+    ports:
+      - "127.0.0.1:${PORT_WORKER_METRICS}:9464"
+    healthcheck:
+      # Aimed at /metrics, not /. The SDK's endpoint serves that one path and
+      # returns an empty 404 for everything else, so probing / always fails.
+      # Without a healthcheck a crash-looping worker counts as settled and
+      # passes the startup gate.
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:9464/metrics"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - sandbox
+
+  prometheus:
+    image: prom/prometheus:${PROMETHEUS_VERSION}
+    depends_on:
+      temporal:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${PORT_PROMETHEUS}:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - sandbox
+
+  grafana:
+    image: grafana/grafana:${GRAFANA_VERSION}
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    environment:
+      # A sandbox opens straight to graphs: no login, no first-run password change.
+      # Editor rather than Admin. Dashboards come from provisioning, so the only
+      # thing Admin would add is control over users, datasources and org settings,
+      # none of which this box needs exposed to an unauthenticated visitor.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Editor
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_USERS_DEFAULT_THEME: dark
+    ports:
+      - "127.0.0.1:${PORT_GRAFANA}:3000"
+    volumes:
+      # Bind mounts rather than a custom image: provisioning is just files, and a
+      # build step would mean rebuilding to change a dashboard. Grafana keeps no
+      # volume: provisioning is the source of truth, so its state is disposable.
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
     restart: unless-stopped
     networks:
       - sandbox
@@ -145,3 +219,4 @@ networks:
 
 volumes:
   postgresql-data:
+  prometheus-data:

@@ -21,7 +21,29 @@ var builder = Host.CreateApplicationBuilder(args);
 // is built without an explicit runtime; any client constructed before this line
 // would bind to that default, and its metrics would never reach our endpoint.
 // Build the runtime first, then hand it to every client.
-var runtime = new TemporalRuntime(new TemporalRuntimeOptions());
+var runtime = new TemporalRuntime(new TemporalRuntimeOptions
+{
+    Telemetry = new()
+    {
+        Metrics = new()
+        {
+            // Bind every interface: 127.0.0.1 would be unreachable from the
+            // Prometheus container. Scrape path is /metrics and nothing else;
+            // every other path returns an empty 404.
+            Prometheus = new(config.MetricsAddress),
+
+            // The naming flags are deliberately left alone. Core-based SDKs emit
+            // durations in integer milliseconds and counters without a _total
+            // suffix, and the dashboard written for those SDKs expects exactly
+            // that. Switching to Prometheus-conventional naming would be more
+            // idiomatic and would make every panel read empty.
+            GlobalTags = new KeyValuePair<string, string>[]
+            {
+                new("service", "sandbox-worker"),
+            },
+        },
+    },
+});
 
 builder.Services.AddSingleton(config);
 builder.Services.AddSingleton(runtime);

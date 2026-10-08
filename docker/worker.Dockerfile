@@ -46,6 +46,14 @@ RUN dotnet publish src/Sandbox.Worker \
         -o /app
 
 FROM mcr.microsoft.com/dotnet/runtime:10.0
+
+# The runtime image ships no curl, wget, nc or python, so a compose healthcheck
+# has nothing to probe with. curl is the smallest thing that can speak HTTP to
+# the SDK's metrics endpoint.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN useradd --create-home --uid 10001 worker
 WORKDIR /app
 COPY --from=build --chown=worker:worker /app ./

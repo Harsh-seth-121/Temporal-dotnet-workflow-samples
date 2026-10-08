@@ -10,13 +10,15 @@ public sealed record SandboxConfig(
     string Address,
     string Namespace,
     string TaskQueue,
-    int ConnectAttempts)
+    int ConnectAttempts,
+    string MetricsAddress)
 {
     public static SandboxConfig FromEnvironment() => new(
         Address: Get("TEMPORAL_ADDRESS", "localhost:7233"),
         Namespace: Get("TEMPORAL_NAMESPACE", "default"),
         TaskQueue: Get("TEMPORAL_TASK_QUEUE", "sandbox"),
-        ConnectAttempts: GetInt("TEMPORAL_CONNECT_ATTEMPTS", 10));
+        ConnectAttempts: GetInt("TEMPORAL_CONNECT_ATTEMPTS", 10),
+        MetricsAddress: Get("WORKER_METRICS_ADDRESS", "0.0.0.0:9464"));
 
     private static int GetInt(string key, int fallback) =>
         int.TryParse(Environment.GetEnvironmentVariable(key), out var value) && value > 0
