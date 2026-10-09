@@ -29,8 +29,10 @@ env: ## Create deploy/.env from the example, and check it has not drifted
 		fi; \
 	fi
 
+# --build matters here: without it compose reuses the worker image it built once,
+# so editing source and re-running would silently keep running the old code.
 up: env ## Start the stack and wait until everything is healthy
-	$(COMPOSE) up -d
+	$(COMPOSE) up -d --build
 	@scripts/wait-healthy.sh
 
 down: ## Stop the stack, keeping all data

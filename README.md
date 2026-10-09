@@ -91,6 +91,12 @@ Not wired up yet. The pieces are in place for it:
 ```yaml
   loadgen:
     image: ghcr.io/temporalio/benchmark-workers:main
+    # Behind a profile so `make up` never starts it. Run it with
+    # `docker compose --profile load up -d loadgen`. The profile also keeps the
+    # startup gate honest: compose omits inactive-profile services from
+    # `config --services`, so scripts/wait-healthy.sh will not wait for a
+    # container that was never meant to start.
+    profiles: [load]
     command: ["runner", "-c", "50", "-t", "HelloWorkflow", "-tq", "${TEMPORAL_TASK_QUEUE}"]
     environment:
       TEMPORAL_GRPC_ENDPOINT: temporal:7233

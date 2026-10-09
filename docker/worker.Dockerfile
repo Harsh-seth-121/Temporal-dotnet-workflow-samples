@@ -23,20 +23,23 @@ RUN arch="${TARGETARCH:-$(dpkg --print-architecture)}" \
     && echo "$arch" > /tmp/dotnet-arch \
     && echo "building for .NET architecture: $arch"
 
-# Project files first so the restore layer survives source edits.
-COPY global.json Directory.Build.props Directory.Packages.props ./
-COPY src/Sandbox.Abstractions/Sandbox.Abstractions.csproj   src/Sandbox.Abstractions/
-COPY src/Sandbox.Samples.Hello/Sandbox.Samples.Hello.csproj src/Sandbox.Samples.Hello/
-COPY src/Sandbox.Worker/Sandbox.Worker.csproj               src/Sandbox.Worker/
-RUN dotnet restore src/Sandbox.Worker -a "$(cat /tmp/dotnet-arch)"
-
-COPY .editorconfig ./
+COPY global.json Directory.Build.props Directory.Packages.props .editorconfig ./
 COPY src/ src/
+
+# The whole source tree is copied before restore rather than a hand-listed set of
+# project files. Listing them caches the restore layer across source edits, but it
+# also means adding a sample project silently breaks this build until someone
+# remembers to add a COPY line here, which defeats the point of samples being
+# additive. A cache mount keeps the package downloads instead, which is where the
+# time actually goes.
+RUN --mount=type=cache,target=/root/.nuget/packages \
+    dotnet restore src/Sandbox.Worker -a "$(cat /tmp/dotnet-arch)"
 
 # Publishing for one runtime identifier ships a single copy of the native core.
 # The package carries one roughly 28 MB library per platform across eight
 # platforms, and a portable publish would copy all of them.
-RUN dotnet publish src/Sandbox.Worker \
+RUN --mount=type=cache,target=/root/.nuget/packages \
+    dotnet publish src/Sandbox.Worker \
         -c Release \
         -a "$(cat /tmp/dotnet-arch)" \
         --self-contained false \
