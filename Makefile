@@ -47,11 +47,18 @@ up: env ## Start the stack and wait until everything is healthy
 urls: ## Print every URL the stack exposes
 	@scripts/print-urls.sh
 
+# --remove-orphans is what clears a container left by `docker compose run`.
+# Compose stopped removing those on `down` in 2.10: a one-off cannot be tied to a
+# selected service, so it is treated as an orphan. `make smoke` runs one, and
+# killing it before `--rm` fires leaves an exited container that scripts/wait-healthy.sh
+# has to filter out by label. This is the other half of that, so the stray actually
+# goes away instead of being ignored forever. `up` must never carry the flag: it
+# runs without the load profile, so it would delete a running load generator.
 down: ## Stop the stack, keeping all data
-	$(COMPOSE_ALL) down
+	$(COMPOSE_ALL) down --remove-orphans
 
 reset: ## Stop the stack and delete all data volumes
-	$(COMPOSE_ALL) down -v
+	$(COMPOSE_ALL) down -v --remove-orphans
 
 logs: ## Follow logs from every service
 	$(COMPOSE_ALL) logs -f
