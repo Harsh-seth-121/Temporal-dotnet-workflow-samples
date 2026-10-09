@@ -223,22 +223,28 @@ services:
     networks:
       - sandbox
 
-  # Database UI, off by default. Start it with `make tools`.
-  #
-  # Behind a profile so it does not join the default stack: compose omits
-  # inactive-profile services from `config --services`, so the startup gate does
-  # not wait for a container nobody asked for.
+  # Database UI. Postgres speaks its own wire protocol on 5432, so a browser
+  # pointed at the published port gets nothing back. This is what makes the
+  # schema and its rows readable without installing a client on the host.
   adminer:
     image: adminer:5
-    profiles: [tools]
     depends_on:
       postgresql:
         condition: service_healthy
     environment:
+      # The only ADMINER_* variable this image actually reads: it prefills the
+      # server field. There is no equivalent for the driver, and the form
+      # defaults to MySQL, which is why scripts/print-urls.sh prints the URL
+      # with ?pgsql=postgresql rather than a bare host and port.
       ADMINER_DEFAULT_SERVER: postgresql
-      ADMINER_DEFAULT_DRIVER: pgsql
     ports:
       - "127.0.0.1:${PORT_ADMINER}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:8080/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
     networks:
       - sandbox

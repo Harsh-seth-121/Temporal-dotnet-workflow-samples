@@ -4,13 +4,15 @@ ENV_EXAMPLE  := deploy/.env.example
 COMPOSE      := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE)
 
 # Teardown and inspection need every profile. `docker compose down` only touches
-# services in the active profile set, so an optional service started earlier keeps
+# services in the active profile set, so anything started from a profile keeps
 # running through a `down` and even a `reset`, which is exactly when you expect a
-# clean machine. `up` deliberately does NOT use this, or it would start them.
+# clean machine. Nothing in the default stack sits behind a profile today; the
+# load generator sketched in the README does. `up` deliberately does NOT use this,
+# or it would start them.
 COMPOSE_ALL  := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE) --profile '*'
 
 .DEFAULT_GOAL := help
-.PHONY: help up down reset logs ps env build test run worker smoke urls tools
+.PHONY: help up down reset logs ps env build test run worker smoke urls
 
 help: ## Show available targets
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  %-8s %s\n", $$1, $$2}'
@@ -43,10 +45,6 @@ up: env ## Start the stack and wait until everything is healthy
 	@scripts/print-urls.sh
 
 urls: ## Print every URL the stack exposes
-	@scripts/print-urls.sh
-
-tools: env ## Start the optional database UI
-	$(COMPOSE) --profile tools up -d adminer
 	@scripts/print-urls.sh
 
 down: ## Stop the stack, keeping all data

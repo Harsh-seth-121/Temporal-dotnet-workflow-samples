@@ -25,7 +25,7 @@ and marks anything that is not running.
 | Prometheus | http://localhost:9090 | Query browser; `/targets` shows scrape health |
 | Server metrics | http://localhost:8000/metrics | All four roles, split by the `service_name` label |
 | Worker metrics | http://localhost:9464/metrics | .NET SDK metrics |
-| Database UI | http://localhost:8089 | Off by default. `make tools` starts it |
+| Database UI | http://localhost:8089/?pgsql=postgresql | Browse the schema and its rows |
 
 Straight to a dashboard:
 
@@ -42,10 +42,13 @@ Two endpoints are not browser pages:
 Every port is published on loopback only, so none of this is reachable from your
 network. Ports live in `deploy/.env`; change one there and the printed URLs follow.
 
-The database has no UI of its own. `make tools` adds Adminer on the URL above,
-behind a compose profile so it stays out of the default stack. It opens
-pre-pointed at the `postgresql` host; log in with the credentials from
-`deploy/.env` and pick the `temporal` or `temporal_visibility` database.
+Neither of those two opens in a browser. `localhost:55432` speaks the Postgres
+wire protocol, so a browser pointed at it gets nothing back. Adminer is the way
+in, and its link above arrives with the driver and host already filled. That
+leaves the username and password, both `temporal` unless you edited `deploy/.env`.
+Once you are in, `temporal` holds the workflow schema (`executions`,
+`history_node`, `task_queues`) and `temporal_visibility` holds the rows behind
+workflow search.
 
 ### Dashboards
 
@@ -69,7 +72,6 @@ wrong rather than that the panel is broken.
 | `make reset` | Stop and delete the volumes, for a genuinely clean box |
 | `make smoke` | End-to-end check; exits non-zero if anything is wrong |
 | `make urls` | Print every URL, marking anything not running |
-| `make tools` | Start the optional database UI |
 | `make run NAME=you` | Run one workflow and print the result |
 | `make worker` | Run the worker on the host instead of in a container |
 | `make test` | Run the test suite |

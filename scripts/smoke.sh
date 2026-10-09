@@ -39,11 +39,13 @@ env_value() {
 # genuinely stop the script.
 port_prometheus=$(env_value PORT_PROMETHEUS) || exit 1
 port_grafana=$(env_value PORT_GRAFANA)       || exit 1
+port_adminer=$(env_value PORT_ADMINER)       || exit 1
 NAMESPACE=$(env_value TEMPORAL_NAMESPACE)    || exit 1
 TASK_QUEUE=$(env_value TEMPORAL_TASK_QUEUE)  || exit 1
 
 PROMETHEUS_URL="http://localhost:${port_prometheus}"
 GRAFANA_URL="http://localhost:${port_grafana}"
+ADMINER_URL="http://localhost:${port_adminer}"
 
 failures=0
 
@@ -145,6 +147,20 @@ check "worker SDK metrics present"              series_present 'temporal_worker_
 check "workflow completion recorded by the SDK" series_present 'temporal_workflow_completed'
 check "grafana datasource provisioned"          curl -sf "${GRAFANA_URL}/api/datasources"
 check "grafana dashboards provisioned"          dashboards_provisioned 2
+
+echo
+echo "Checking the database UI"
+
+# Asserts the link the banner prints, not just that the container serves pages.
+# Adminer has no environment variable for the driver and its login form defaults
+# to MySQL, so the query string is the whole mechanism; an Adminer release that
+# changed that contract would otherwise fail silently in the browser.
+adminer_pinned_to_postgres() {
+    curl -sf "${ADMINER_URL}/?pgsql=postgresql" \
+        | grep -q '<option value="pgsql" selected'
+}
+
+check "database UI opens on PostgreSQL"         adminer_pinned_to_postgres
 
 echo
 if [ "$failures" -eq 0 ]; then

@@ -19,6 +19,9 @@ running() {
 
 RUNNING=$(running)
 
+PG_USER=$(sed -n 's/^POSTGRES_USER=//p' deploy/.env | tr -d '\r' | head -1)
+PG_PASSWORD=$(sed -n 's/^POSTGRES_PASSWORD=//p' deploy/.env | tr -d '\r' | head -1)
+
 # service | label | url | note
 rows=(
   "temporal-ui|Temporal UI|http://localhost:$(port PORT_TEMPORAL_UI)|workflows, history, search"
@@ -26,7 +29,7 @@ rows=(
   "prometheus|Prometheus|http://localhost:$(port PORT_PROMETHEUS)|query browser"
   "temporal|Server metrics|http://localhost:$(port PORT_TEMPORAL_METRICS)/metrics|all four roles"
   "worker|Worker metrics|http://localhost:$(port PORT_WORKER_METRICS)/metrics|.NET SDK"
-  "adminer|Database UI|http://localhost:$(port PORT_ADMINER)|off by default, 'make tools'"
+  "adminer|Database UI|http://localhost:$(port PORT_ADMINER)/?pgsql=postgresql|log in as $PG_USER / $PG_PASSWORD"
 )
 
 printf '\n  %s\n\n' "Open these:"
@@ -47,5 +50,5 @@ printf '     %-16s %s\n' ".NET SDK" "http://localhost:$(port PORT_GRAFANA)/d/tem
 
 printf '\n  %s\n\n' "Not browser endpoints:"
 printf '     %-16s %s\n' "Temporal gRPC" "localhost:$(port PORT_TEMPORAL_GRPC)   (the temporal CLI default, so host commands just work)"
-printf '     %-16s %s\n' "Postgres" "postgresql://$(sed -n 's/^POSTGRES_USER=//p' deploy/.env | tr -d '\r'):$(sed -n 's/^POSTGRES_PASSWORD=//p' deploy/.env | tr -d '\r')@localhost:$(port PORT_POSTGRES)/temporal"
+printf '     %-16s %s\n' "Postgres" "postgresql://${PG_USER}:${PG_PASSWORD}@localhost:$(port PORT_POSTGRES)/temporal   (a wire protocol, not a web page: use the Database UI above)"
 echo
