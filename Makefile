@@ -4,7 +4,7 @@ ENV_EXAMPLE  := deploy/.env.example
 COMPOSE      := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE)
 
 .DEFAULT_GOAL := help
-.PHONY: help up down reset logs ps env build test run worker
+.PHONY: help up down reset logs ps env build test run worker smoke
 
 help: ## Show available targets
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  %-8s %s\n", $$1, $$2}'
@@ -44,6 +44,9 @@ logs: ## Follow logs from every service
 
 ps: ## Show service status
 	$(COMPOSE) ps
+
+smoke: up ## Verify the whole box end to end
+	@scripts/smoke.sh
 
 build: ## Build the solution
 	dotnet build

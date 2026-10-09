@@ -125,6 +125,15 @@ services:
       TEMPORAL_CORS_ORIGINS: http://localhost:${PORT_TEMPORAL_UI}
     ports:
       - "127.0.0.1:${PORT_TEMPORAL_UI}:8080"
+    healthcheck:
+      # The image has wget but no curl. Without this the UI is the one service the
+      # startup gate accepts purely for running, so a UI that cannot reach the
+      # server would still pass.
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:8080/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
     restart: unless-stopped
     networks:
       - sandbox
