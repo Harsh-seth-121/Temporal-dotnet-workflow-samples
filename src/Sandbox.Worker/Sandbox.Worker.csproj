@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Sandbox.Worker</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Temporalio" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <ProjectReference Include="../Sandbox.Abstractions/Sandbox.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Each sample is referenced here and nowhere else in this project. The code
+         finds them by reflection, so adding a sample is one line in this file. -->
+    <ProjectReference Include="../Sandbox.Samples.Hello/Sandbox.Samples.Hello.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Sandbox.Client</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Temporalio" />
+    <ProjectReference Include="../Sandbox.Abstractions/Sandbox.Abstractions.csproj" />
+    <ProjectReference Include="../Sandbox.Samples.Hello/Sandbox.Samples.Hello.csproj" />
+  </ItemGroup>
+
+</Project>

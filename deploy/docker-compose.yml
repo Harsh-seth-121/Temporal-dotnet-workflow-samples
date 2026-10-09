@@ -1,0 +1,251 @@
+# Self-contained local Temporal deployment.
+#
+# Deliberately omitted, and why:
+#   - no `version:` key          obsolete in Compose v2+, warns and is ignored
+#   - no `container_name:`       escapes the project namespace and collides across projects
+#   - no `name:` on the network  same problem; it would survive `down` as a global network
+#   - no anonymous volumes       they linger unlabeled while the stack runs
+#
+# The project name comes from COMPOSE_PROJECT_NAME in .env. Without it the project
+# would be named after this directory and `make reset` would miss the volumes.
+
+# Every port below is published on 127.0.0.1 rather than all interfaces. Compose
+# defaults to 0.0.0.0, which on a laptop puts Postgres (password `temporal`), the
+# Prometheus API, and both metrics endpoints on the local network.
+
+services:
+  postgresql:
+    image: postgres:${POSTGRES_VERSION}
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:${PORT_POSTGRES}:5432"
+    volumes:
+      - postgresql-data:/var/lib/postgresql/data
+    healthcheck:
+      # -U matters: pg_isready defaults to the OS user, which is root in this image.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - sandbox
+
+  # One-shot. Creates and migrates the temporal and temporal_visibility databases,
+  # then exits 0. The server waits on its successful completion.
+  temporal-setup:
+    image: temporalio/admin-tools:${TEMPORAL_VERSION}
+    # Marks this as a run-once container. scripts/wait-healthy.sh requires labelled
+    # services to reach exit 0 rather than accepting "still running" as settled.
+    labels:
+      sandbox.lifecycle: oneshot
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    environment:
+      POSTGRES_SEEDS: postgresql
+      POSTGRES_USER: ${POSTGRES_USER}
+      # temporal-sql-tool reads the password from SQL_PASSWORD, not POSTGRES_PWD.
+      SQL_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_PORT: 5432
+    volumes:
+      - ./temporal:/scripts:ro
+    entrypoint: ["/bin/sh", "/scripts/setup-schema.sh"]
+    restart: "no"
+    networks:
+      - sandbox
+
+  temporal:
+    image: temporalio/server:${TEMPORAL_VERSION}
+    depends_on:
+      temporal-setup:
+        condition: service_completed_successfully
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PWD: ${POSTGRES_PASSWORD}
+      POSTGRES_SEEDS: postgresql
+      # Without this the config template binds 127.0.0.1 and the container is
+      # unreachable from every other container and from the host.
+      BIND_ON_IP: 0.0.0.0
+      NUM_HISTORY_SHARDS: ${NUM_HISTORY_SHARDS}
+      # One endpoint serves all four roles in this single-container
+      # deployment; the service_name label separates them.
+      PROMETHEUS_ENDPOINT: 0.0.0.0:8000
+      # Relative to WORKDIR /etc/temporal, so this resolves under the mount below.
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+    ports:
+      - "127.0.0.1:${PORT_TEMPORAL_GRPC}:7233"
+      - "127.0.0.1:${PORT_TEMPORAL_METRICS}:8000"
+    volumes:
+      - ./temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
+    healthcheck:
+      # The image has nc but no curl. This only proves the port is open, which is
+      # why create-namespace.sh retries rather than trusting it.
+      test: ["CMD", "nc", "-z", "localhost", "7233"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - sandbox
+
+  # One-shot. Registers the namespace once the server is accepting connections.
+  temporal-namespace:
+    image: temporalio/admin-tools:${TEMPORAL_VERSION}
+    labels:
+      sandbox.lifecycle: oneshot
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE}
+      TEMPORAL_RETENTION: ${TEMPORAL_RETENTION}
+    volumes:
+      - ./temporal:/scripts:ro
+    entrypoint: ["/bin/sh", "/scripts/create-namespace.sh"]
+    restart: "no"
+    networks:
+      - sandbox
+
+  temporal-ui:
+    image: temporalio/ui:${TEMPORAL_UI_VERSION}
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      # The UI loads but shows no data if the browser origin is not allowed here.
+      TEMPORAL_CORS_ORIGINS: http://localhost:${PORT_TEMPORAL_UI}
+    ports:
+      - "127.0.0.1:${PORT_TEMPORAL_UI}:8080"
+    healthcheck:
+      # The image has wget but no curl. Without this the UI is the one service the
+      # startup gate accepts purely for running, so a UI that cannot reach the
+      # server would still pass.
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:8080/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - sandbox
+
+  worker:
+    build:
+      # The repo root, so the build can see the solution's project files.
+      context: ..
+      dockerfile: docker/worker.Dockerfile
+    depends_on:
+      # Not just the server being healthy. The worker's first action is to connect
+      # and poll, and TemporalClient.ConnectAsync does not retry the initial
+      # connection, so it waits until the namespace is actually registered.
+      temporal-namespace:
+        condition: service_completed_successfully
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE}
+      TEMPORAL_TASK_QUEUE: ${TEMPORAL_TASK_QUEUE}
+      WORKER_METRICS_ADDRESS: 0.0.0.0:9464
+    ports:
+      - "127.0.0.1:${PORT_WORKER_METRICS}:9464"
+    healthcheck:
+      # Aimed at /metrics, not /. The SDK's endpoint serves that one path and
+      # returns an empty 404 for everything else, so probing / always fails.
+      # Without a healthcheck a crash-looping worker counts as settled and
+      # passes the startup gate.
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:9464/metrics"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - sandbox
+
+  prometheus:
+    image: prom/prometheus:${PROMETHEUS_VERSION}
+    depends_on:
+      temporal:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${PORT_PROMETHEUS}:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - sandbox
+
+  grafana:
+    image: grafana/grafana:${GRAFANA_VERSION}
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    environment:
+      # A sandbox opens straight to graphs: no login, no first-run password change.
+      # Editor rather than Admin. Dashboards come from provisioning, so the only
+      # thing Admin would add is control over users, datasources and org settings,
+      # none of which this box needs exposed to an unauthenticated visitor.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Editor
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_USERS_DEFAULT_THEME: dark
+    ports:
+      - "127.0.0.1:${PORT_GRAFANA}:3000"
+    volumes:
+      # Bind mounts rather than a custom image: provisioning is just files, and a
+      # build step would mean rebuilding to change a dashboard. Grafana keeps no
+      # volume: provisioning is the source of truth, so its state is disposable.
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - sandbox
+
+  # Database UI, off by default. Start it with `make tools`.
+  #
+  # Behind a profile so it does not join the default stack: compose omits
+  # inactive-profile services from `config --services`, so the startup gate does
+  # not wait for a container nobody asked for.
+  adminer:
+    image: adminer:5
+    profiles: [tools]
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    environment:
+      ADMINER_DEFAULT_SERVER: postgresql
+      ADMINER_DEFAULT_DRIVER: pgsql
+    ports:
+      - "127.0.0.1:${PORT_ADMINER}:8080"
+    restart: unless-stopped
+    networks:
+      - sandbox
+
+networks:
+  sandbox:
+
+volumes:
+  postgresql-data:
+  prometheus-data:

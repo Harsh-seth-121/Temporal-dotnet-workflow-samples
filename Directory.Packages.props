@@ -1,0 +1,22 @@
+<Project>
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Keep Temporalio and its extensions on the same version. -->
+    <PackageVersion Include="Temporalio" Version="1.18.0" />
+    <PackageVersion Include="Temporalio.Extensions.Hosting" Version="1.18.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageVersion Include="xunit.v3" Version="4.0.1" />
+  </ItemGroup>
+
+</Project>

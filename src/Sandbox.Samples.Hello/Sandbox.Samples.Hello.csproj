@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Temporalio" />
+    <ProjectReference Include="../Sandbox.Abstractions/Sandbox.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>

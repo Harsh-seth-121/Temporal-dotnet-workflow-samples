@@ -1,0 +1,14 @@
+# Allowlist rather than a denylist. The worker image needs very little from the
+# repository root, and starting from "exclude everything" means a file added at
+# the root later cannot quietly enlarge the build context or end up in the image.
+*
+
+!global.json
+!Directory.Build.props
+!Directory.Packages.props
+!.editorconfig
+!src
+
+# Build output inside the source tree that the rule above re-included.
+src/**/bin
+src/**/obj

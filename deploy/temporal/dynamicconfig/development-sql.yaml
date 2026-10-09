@@ -1,0 +1,37 @@
+# Temporal dynamic config for the local sandbox.
+#
+# This file is polled and hot-reloaded, so values can be retuned while the stack
+# is running. Each key maps to a list of {value, constraints} entries; an entry is
+# only selected when its constraint set matches the query exactly, so an entry
+# with constraints but no unconstrained fallback silently never applies.
+
+limit.maxIDLength:
+  - value: 255
+    constraints: {}
+
+# Without this, a newly registered custom search attribute takes up to 60s to
+# become usable. Fine for a sandbox, not something to carry into production.
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true
+    constraints: {}
+
+# ---------------------------------------------------------------------------
+# Throughput limits, left at their defaults on purpose.
+#
+# These are the first ceilings a load test hits. They are not raised here because
+# NUM_HISTORY_SHARDS is 4 in this box: lifting the rate limits alone just moves
+# the bottleneck without raising throughput. When you raise shard count (which
+# needs `make reset`, since it is fixed at schema creation), uncomment these and
+# raise SQL_MAX_CONNS on the server to match, or the Postgres connection pool
+# becomes the new wall.
+#
+# frontend.rps:                          default 2400
+# frontend.namespaceRPS:                 default 2400
+# frontend.namespaceCount:               default 1200
+# frontend.persistenceMaxQPS:            default 2000
+# history.persistenceMaxQPS:             default 9000
+# matching.rps:                          default 1200
+# matching.persistenceMaxQPS:            default 3000
+# matching.numTaskqueueReadPartitions:   default 4
+# matching.numTaskqueueWritePartitions:  default 4
+# ---------------------------------------------------------------------------
