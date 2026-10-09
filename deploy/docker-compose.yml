@@ -223,6 +223,26 @@ services:
     networks:
       - sandbox
 
+  # Database UI, off by default. Start it with `make tools`.
+  #
+  # Behind a profile so it does not join the default stack: compose omits
+  # inactive-profile services from `config --services`, so the startup gate does
+  # not wait for a container nobody asked for.
+  adminer:
+    image: adminer:5
+    profiles: [tools]
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    environment:
+      ADMINER_DEFAULT_SERVER: postgresql
+      ADMINER_DEFAULT_DRIVER: pgsql
+    ports:
+      - "127.0.0.1:${PORT_ADMINER}:8080"
+    restart: unless-stopped
+    networks:
+      - sandbox
+
 networks:
   sandbox:
 

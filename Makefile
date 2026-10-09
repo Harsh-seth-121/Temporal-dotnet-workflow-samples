@@ -4,7 +4,7 @@ ENV_EXAMPLE  := deploy/.env.example
 COMPOSE      := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE)
 
 .DEFAULT_GOAL := help
-.PHONY: help up down reset logs ps env build test run worker smoke
+.PHONY: help up down reset logs ps env build test run worker smoke urls tools
 
 help: ## Show available targets
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  %-8s %s\n", $$1, $$2}'
@@ -34,6 +34,14 @@ env: ## Create deploy/.env from the example, and check it has not drifted
 up: env ## Start the stack and wait until everything is healthy
 	$(COMPOSE) up -d --build
 	@scripts/wait-healthy.sh
+	@scripts/print-urls.sh
+
+urls: ## Print every URL the stack exposes
+	@scripts/print-urls.sh
+
+tools: env ## Start the optional database UI
+	$(COMPOSE) --profile tools up -d adminer
+	@scripts/print-urls.sh
 
 down: ## Stop the stack, keeping all data
 	$(COMPOSE) down

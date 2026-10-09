@@ -13,19 +13,39 @@ pulled. Nothing is installed on your machine: the stack runs entirely in
 containers, and the smoke test drives a workflow through the `temporal` CLI inside
 one of them, so you can verify the box before building any .NET.
 
-## What you get
+## URLs
 
-| Service | URL | Notes |
+`make up` prints these when it finishes. `make urls` prints them again any time,
+and marks anything that is not running.
+
+| What | URL | Notes |
 |---|---|---|
-| Temporal | `localhost:7233` | gRPC. The `temporal` CLI's default address, so host commands just work |
-| Web UI | http://localhost:8088 | Workflow history and search |
-| Grafana | http://localhost:3001 | Two dashboards, provisioned, no login |
-| Prometheus | http://localhost:9090 | Scrapes the server and the worker |
-| Server metrics | `localhost:8000/metrics` | All four roles, separated by the `service_name` label |
-| Worker metrics | `localhost:9464/metrics` | SDK metrics from the .NET worker |
-| Postgres | `localhost:55432` | Temporal's persistence |
+| Temporal UI | http://localhost:8088 | Workflow history, search, stack traces |
+| Grafana | http://localhost:3001 | Provisioned, no login |
+| Prometheus | http://localhost:9090 | Query browser; `/targets` shows scrape health |
+| Server metrics | http://localhost:8000/metrics | All four roles, split by the `service_name` label |
+| Worker metrics | http://localhost:9464/metrics | .NET SDK metrics |
+| Database UI | http://localhost:8089 | Off by default. `make tools` starts it |
 
-Every port is published on loopback only. Ports are set in `deploy/.env`.
+Straight to a dashboard:
+
+- Server: http://localhost:3001/d/temporal-sandbox-server
+- .NET SDK: http://localhost:3001/d/temporal-sdk-core
+
+Two endpoints are not browser pages:
+
+| What | Address | Notes |
+|---|---|---|
+| Temporal | `localhost:7233` | gRPC. The `temporal` CLI's default, so host commands just work |
+| Postgres | `postgresql://temporal:temporal@localhost:55432/temporal` | Temporal's persistence |
+
+Every port is published on loopback only, so none of this is reachable from your
+network. Ports live in `deploy/.env`; change one there and the printed URLs follow.
+
+The database has no UI of its own. `make tools` adds Adminer on the URL above,
+behind a compose profile so it stays out of the default stack. It opens
+pre-pointed at the `postgresql` host; log in with the credentials from
+`deploy/.env` and pick the `temporal` or `temporal_visibility` database.
 
 ### Dashboards
 
@@ -48,6 +68,8 @@ wrong rather than that the panel is broken.
 | `make down` | Stop, keeping data |
 | `make reset` | Stop and delete the volumes, for a genuinely clean box |
 | `make smoke` | End-to-end check; exits non-zero if anything is wrong |
+| `make urls` | Print every URL, marking anything not running |
+| `make tools` | Start the optional database UI |
 | `make run NAME=you` | Run one workflow and print the result |
 | `make worker` | Run the worker on the host instead of in a container |
 | `make test` | Run the test suite |
@@ -65,7 +87,8 @@ src/Sandbox.Worker/           host, runtime, metrics, sample discovery
 src/Sandbox.Client/           starter
 deploy/                       compose file, Prometheus and Grafana config
 docker/                       worker image
-scripts/                      startup gate and smoke test
+scripts/                      startup gate, smoke test, URL banner
+tests/                        workflow tests
 ```
 
 ## Adding a sample
