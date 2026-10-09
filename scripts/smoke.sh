@@ -114,16 +114,36 @@ fi
 echo
 echo "Checking metrics"
 
-targets_up() {
-    local want="$1"
-    local up
-    up=$(curl -sf "${PROMETHEUS_URL}/api/v1/targets?state=active" \
+# Named, not counted. The load generator adds a fourth configured job that is down
+# on an idle box, and a count of three then passes on a box where the server target
+# is red and the load generator happens to be green.
+core_targets_up() {
+    curl -sf "${PROMETHEUS_URL}/api/v1/targets?state=active" \
         | python3 -c "
 import sys, json
-targets = json.load(sys.stdin)['data']['activeTargets']
-print(sum(1 for t in targets if t['health'] == 'up'))
-")
-    [ "$up" -ge "$want" ]
+want = {'temporal-server', 'temporal-dotnet-worker', 'prometheus'}
+up = {t['labels']['job'] for t in json.load(sys.stdin)['data']['activeTargets']
+      if t['health'] == 'up'}
+missing = want - up
+if missing:
+    print('not up: ' + ', '.join(sorted(missing)))
+    raise SystemExit(1)
+"
+}
+
+# That the job exists is asserted; that its target is up is not. Load is optional, so
+# requiring it would fail on an idle box. But the job going missing is a real and
+# silent failure: compose does not recreate Prometheus when a bind-mounted file
+# changes, so anyone who added the new env keys by hand rather than regenerating
+# deploy/.env keeps the old scrape config. Nothing errors, and the dashboard row just
+# stays empty forever.
+loadgen_job_configured() {
+    curl -sf "${PROMETHEUS_URL}/api/v1/targets?state=active" \
+        | python3 -c "
+import sys, json
+jobs = {t['labels']['job'] for t in json.load(sys.stdin)['data']['activeTargets']}
+raise SystemExit(0 if 'loadgen' in jobs else 1)
+"
 }
 
 dashboards_provisioned() {
@@ -140,7 +160,8 @@ series_present() {
     [ "$count" -gt 0 ]
 }
 
-check "prometheus has 3 healthy targets"        targets_up 3
+check "prometheus has the core targets up"      core_targets_up
+check "load generator scrape job configured"    loadgen_job_configured
 check "server metrics present"                  series_present 'service_requests'
 check "server exposes all four roles"           series_present 'count by (service_name) (service_requests)'
 check "worker SDK metrics present"              series_present 'temporal_worker_task_slots_available'

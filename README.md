@@ -26,6 +26,7 @@ and marks anything that is not running.
 | Server metrics | http://localhost:8000/metrics | All four roles, split by the `service_name` label |
 | Worker metrics | http://localhost:9464/metrics | .NET SDK metrics |
 | Database UI | http://localhost:8089/?pgsql=postgresql | Browse the schema and its rows |
+| Load generator | http://localhost:9095/metrics | Only while `make load` is running |
 
 Straight to a dashboard:
 
@@ -72,6 +73,8 @@ wrong rather than that the panel is broken.
 | `make reset` | Stop and delete the volumes, for a genuinely clean box |
 | `make smoke` | End-to-end check; exits non-zero if anything is wrong |
 | `make urls` | Print every URL, marking anything not running |
+| `make load MODE=demo` | Start the load generator; also `bench` and `soak` |
+| `make unload` | Stop the load generator, leaving the stack up |
 | `make run NAME=you` | Run one workflow and print the result |
 | `make worker` | Run the worker on the host instead of in a container |
 | `make test` | Run the test suite |
@@ -111,38 +114,65 @@ and the only symptom would be a workflow sitting unclaimed until it times out.
 
 ## Load testing
 
-Not wired up yet. The pieces are in place for it:
-
-```yaml
-  loadgen:
-    image: ghcr.io/temporalio/benchmark-workers:main
-    # Behind a profile so `make up` never starts it. Run it with
-    # `docker compose --profile load up -d loadgen`. The profile also keeps the
-    # startup gate honest: compose omits inactive-profile services from
-    # `config --services`, so scripts/wait-healthy.sh will not wait for a
-    # container that was never meant to start.
-    profiles: [load]
-    command: ["runner", "-c", "50", "-t", "HelloWorkflow", "-tq", "${TEMPORAL_TASK_QUEUE}"]
-    environment:
-      TEMPORAL_GRPC_ENDPOINT: temporal:7233
-      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE}
-      PROMETHEUS_ENDPOINT: ":9095"
-    depends_on:
-      temporal: { condition: service_healthy }
+```sh
+make load              # demo, 5 workflows in flight
+make load MODE=bench   # 50, enough to find where this box binds
+make load MODE=soak    # 20, meant to run for hours
+make unload            # stop it, leave the rest of the stack up
 ```
 
-plus a scrape job for `loadgen:9095`. That image drives any workflow type on any
-task queue, so it exercises the worker here without running one of its own. Its
-`benchmark_runner_*` metrics measure latency from the client's point of view,
-which is a useful cross-check against what the SDK reports about itself.
+The generator is `benchmark-workers`, behind the `load` compose profile so `make up`
+never starts it. It drives `HelloWorkflow` in a closed loop: start a workflow, wait
+for its result, start the next. There is no duration or rate flag, so concurrency is
+the only throttle and the run continues until you stop it. The three modes differ by
+that number and by how long you leave them going, which is why they are one target
+with a `MODE=` rather than three.
 
-`HelloWorkflow` takes a single string specifically so a generator passing one JSON
-argument can call it unchanged.
+`make load` blocks until it has seen the completed counter actually move. That check
+matters more than it sounds: a generator pointed at a workflow whose argument shape
+does not match fails as a workflow task, Temporal retries it forever, and the failure
+counter stays at zero while nothing finishes. "The container is up" and "the endpoint
+answers" are both true in that state.
 
-Before running one, raise `NUM_HISTORY_SHARDS` in `deploy/.env`. It defaults to 4,
-which is fine for development and low enough that throughput plateaus on shard
-count rather than on anything you are trying to measure. Shard count is fixed when
-the schema is created, so changing it means `make reset` first.
+Its own view of the run is on the **Load generator (client view)** row of the server
+dashboard: throughput, and client-observed latency including the queueing the server
+cannot see for itself. That is the reason the generator is scraped at all rather than
+read off `workflow_success`.
+
+### What the numbers are worth
+
+Comparable to another run on the same machine, with the same shard count and the same
+worker image. Nothing else.
+
+Everything shares one laptop, so the generator competes for CPU with what it measures.
+No container sets a CPU or memory limit. The worker runs at the SDK's default poller
+and slot counts, untouched by this repo, and at `MODE=bench` those are the most likely
+limiter rather than Temporal or .NET. `NUM_HISTORY_SHARDS` defaults to 4, low enough
+that `bench` warns about it, and raising it means `make reset` because the count is
+fixed when the schema is created.
+
+So it answers "did my change make this faster", "where does the latency go", and "when
+does the worker saturate". It is not a throughput figure for Temporal, and a screenshot
+of it is not one either.
+
+A soak is the one thing here that can leave your machine worse than it found it. At
+demo concurrency a 90-second run put 479 workflows through and grew the Postgres volume
+by about 18 MB, roughly 39 KB each, and `TEMPORAL_RETENTION` keeps them for 72h. An
+hour at `bench` is gigabytes. `make down` does not reclaim it; `make reset` does, and
+lowering retention before a long run is the cheaper option.
+
+### Notes before a long run
+
+- Stop the load before `make up`. That rebuilds and recreates the worker underneath a
+  running generator.
+- The first `make load` pulls a new image, so it takes longer than the minute the top
+  of this file promises.
+- After a soak the workflow list is thousands of generated runs. Filter by
+  `WorkflowType` to find anything else.
+- Prometheus shows the `loadgen` target red on an idle box. A static scrape config has
+  no notion of an optional target, so that is the resting state rather than a fault.
+- Scaling the worker does not work today: its host port is fixed, so replicas collide,
+  and the scrape target would reach only one of them.
 
 ## Notes
 

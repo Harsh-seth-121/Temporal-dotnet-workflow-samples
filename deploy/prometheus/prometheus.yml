@@ -31,6 +31,24 @@ scrape_configs:
         labels:
           group: sdk
 
+  # The load generator only runs under the load profile, but Prometheus has no
+  # notion of an optional target: a static config is scraped whether or not the
+  # container exists. This job therefore shows DOWN on an idle box, and that is
+  # the correct reading rather than a fault to chase.
+  #
+  # scrape_interval is 60s here rather than inheriting the global 10s because a
+  # container that is not running is a DNS resolution failure, and at 10s that
+  # failure lands in `make logs` six times a minute for as long as the box is up,
+  # burying everything else worth reading. Panels over these series need a rate
+  # window wide enough to hold several samples at this interval, not the [2m] the
+  # 10s jobs use.
+  - job_name: loadgen
+    scrape_interval: 60s
+    static_configs:
+      - targets: ['loadgen:9095']
+        labels:
+          group: client
+
   - job_name: prometheus
     static_configs:
       - targets: ['localhost:9090']

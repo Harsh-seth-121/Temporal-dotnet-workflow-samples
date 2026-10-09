@@ -249,6 +249,68 @@ services:
     networks:
       - sandbox
 
+  # Load generator, off by default. A sandbox nobody is driving graphs flat lines,
+  # which is no use for tuning anything. This runs a closed loop of HelloWorkflow so
+  # the server, worker and client panels have real traffic. `make load` starts it,
+  # `make unload` stops it.
+  loadgen:
+    # Pinned by digest, and the only pin here that is not a version number. The
+    # benchmark_runner_* series the client panels graph exist on main alone: no
+    # released tag emits them, and :latest is v1.11.0, whose runner binary does not
+    # contain the strings at all. A tag pin would scrape cleanly and stay empty.
+    image: ghcr.io/temporalio/benchmark-workers@${BENCHMARK_WORKERS_DIGEST}
+    # The only profiled service in this file, so `make up` never starts it.
+    # scripts/wait-healthy.sh relies on that: compose omits inactive-profile
+    # services from `config --services`, which is the list the gate waits on.
+    profiles:
+      - load
+    # This image and postgres are the two that set no USER, but postgres drops
+    # privileges in its own entrypoint and this one does not. Nothing here is
+    # uid-sensitive: no volumes, nothing written at runtime, and 9095 is unprivileged.
+    # Numeric because the image carries no /etc/passwd for a name to resolve against.
+    user: "65534:65534"
+    depends_on:
+      # The worker, not the server. The runner waits for each workflow to finish
+      # before starting the next, so with nothing polling the queue it stalls on the
+      # first one and reports nothing.
+      worker:
+        condition: service_healthy
+    environment:
+      # TEMPORAL_GRPC_ENDPOINT, not the TEMPORAL_ADDRESS the .NET worker reads. This
+      # is Go tooling and ignores that name, then dials localhost inside a container
+      # where nothing is listening.
+      TEMPORAL_GRPC_ENDPOINT: temporal:7233
+      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE}
+      TEMPORAL_TASK_QUEUE: ${TEMPORAL_TASK_QUEUE}
+      # Fixed here rather than in .env because it pairs with the workflow input in
+      # `command` below, and the two only make sense changed together. Point this at
+      # a workflow with a different signature while the input stays "Load" and every
+      # attempt becomes a workflow task failure, which Temporal retries forever: the
+      # runner blocks, the failure counter stays at zero, and nothing completes.
+      TEMPORAL_WORKFLOW_TYPE: HelloWorkflow
+      # The only throttle this binary has. It takes no duration or count flag and
+      # imposes no rate limit, so concurrency is the whole control surface.
+      TEMPORAL_CONCURRENT_WORKFLOWS: ${LOADGEN_CONCURRENCY}
+      # Not localhost: a listener on the container's own loopback is unreachable
+      # from Prometheus in another container.
+      PROMETHEUS_ENDPOINT: 0.0.0.0:9095
+    ports:
+      - "127.0.0.1:${PORT_LOADGEN}:9095"
+    # Names the runner explicitly. The image's default command is the benchmark
+    # worker, so omitting this starts a second worker that competes for the task
+    # queue and generates no load at all. The trailing argument is the workflow
+    # input, parsed as JSON, so the inner quotes are part of the value.
+    command: ["/usr/local/bin/runner", "\"Load\""]
+    # No healthcheck is possible: the image is FROM scratch, holding two binaries and
+    # a CA bundle, so CMD and CMD-SHELL alike have nothing to run. Liveness is
+    # asserted from outside by scripts/assert-load-running.sh instead.
+    #
+    # restart "no" because the runner already retries its own errors with backoff.
+    # A container that actually died did so for a reason worth seeing.
+    restart: "no"
+    networks:
+      - sandbox
+
 networks:
   sandbox:
 
