@@ -15,6 +15,7 @@
     <!-- Each sample is referenced here and nowhere else in this project. The code
          finds them by reflection, so adding a sample is one line in this file. -->
     <ProjectReference Include="../Sandbox.Samples.Hello/Sandbox.Samples.Hello.csproj" />
+    <ProjectReference Include="../Sandbox.Samples.Onboarding/Sandbox.Samples.Onboarding.csproj" />
   </ItemGroup>
 
 </Project>

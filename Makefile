@@ -20,7 +20,7 @@ COMPOSE      := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE)
 COMPOSE_ALL  := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE) --profile '*'
 
 .DEFAULT_GOAL := help
-.PHONY: help up down reset logs ps env build test run worker smoke urls load unload
+.PHONY: help up down reset logs ps env build test run worker smoke urls load unload onboard
 
 help: ## Show available targets
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  %-8s %s\n", $$1, $$2}'
@@ -128,6 +128,13 @@ test: ## Run the test suite
 
 run: ## Start one HelloWorkflow and print the result
 	@dotnet run --project src/Sandbox.Client -- "$(NAME)"
+
+# Both variables are always passed, so a blank arrives when one was not set, which is
+# the same deal `run` makes with NAME. PAUSE parks the run just after the welcome step,
+# which is how you keep it open long enough to change the workflow underneath it; see
+# the patching section of the README.
+onboard: ## Start one OnboardingWorkflow; ACCOUNT=, PAUSE= holds it open
+	@dotnet run --project src/Sandbox.Onboarding.Client -- "$(ACCOUNT)" "$(PAUSE)"
 
 worker: ## Run the worker on the host against the containerized server
 	dotnet run --project src/Sandbox.Worker
