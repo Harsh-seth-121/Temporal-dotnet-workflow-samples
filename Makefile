@@ -3,6 +3,12 @@ ENV_FILE     := deploy/.env
 ENV_EXAMPLE  := deploy/.env.example
 COMPOSE      := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE)
 
+# Teardown and inspection need every profile. `docker compose down` only touches
+# services in the active profile set, so an optional service started earlier keeps
+# running through a `down` and even a `reset`, which is exactly when you expect a
+# clean machine. `up` deliberately does NOT use this, or it would start them.
+COMPOSE_ALL  := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE) --profile '*'
+
 .DEFAULT_GOAL := help
 .PHONY: help up down reset logs ps env build test run worker smoke urls tools
 
@@ -44,16 +50,16 @@ tools: env ## Start the optional database UI
 	@scripts/print-urls.sh
 
 down: ## Stop the stack, keeping all data
-	$(COMPOSE) down
+	$(COMPOSE_ALL) down
 
 reset: ## Stop the stack and delete all data volumes
-	$(COMPOSE) down -v
+	$(COMPOSE_ALL) down -v
 
 logs: ## Follow logs from every service
-	$(COMPOSE) logs -f
+	$(COMPOSE_ALL) logs -f
 
 ps: ## Show service status
-	$(COMPOSE) ps
+	$(COMPOSE_ALL) ps
 
 smoke: up ## Verify the whole box end to end
 	@scripts/smoke.sh
