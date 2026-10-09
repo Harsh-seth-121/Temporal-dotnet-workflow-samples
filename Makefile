@@ -129,11 +129,7 @@ test: ## Run the test suite
 run: ## Start one HelloWorkflow and print the result
 	@dotnet run --project src/Sandbox.Client -- "$(NAME)"
 
-# Both variables are always passed, so a blank arrives when one was not set, which is
-# the same deal `run` makes with NAME. PAUSE parks the run just after the welcome step,
-# which is how you keep it open long enough to change the workflow underneath it; see
-# the patching section of the README.
-onboard: ## Start one OnboardingWorkflow; ACCOUNT=, PAUSE= holds it open
+onboard: ## Start onboarding; ACCOUNT sets the account ID and PAUSE holds the workflow open
 	@dotnet run --project src/Sandbox.Onboarding.Client -- "$(ACCOUNT)" "$(PAUSE)"
 
 worker: ## Run the worker on the host against the containerized server

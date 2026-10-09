@@ -3,25 +3,7 @@ namespace Sandbox.Samples.Onboarding.Tests;
 using Temporalio.Workflows;
 
 /// <summary>
-/// OnboardingWorkflow exactly as it stood before the welcome-email patch was added.
-/// It exists only to produce a history that predates that patch, which
-/// OnboardingPatchReplayTests then replays against the real workflow.
-///
-/// It registers under the production workflow type name, so the history it writes is
-/// indistinguishable from one a real pre-patch worker would have written. That is the
-/// whole point: a hand-built history would only prove that a hand-built history
-/// replays.
-///
-/// It lives in the test project, and SampleDiscovery skips any assembly ending
-/// ".Tests", so it can never reach the real worker and collide with the class whose
-/// name it borrows.
-///
-/// Note what this copy does and does not contain. The screening patch is here, in its
-/// `if` form, because that is where the code genuinely was: patch one had been added
-/// and had not yet been deprecated. A copy predating *both* patches would issue a
-/// different command sequence and would fail to replay against today's
-/// DeprecatePatch call, which is precisely why you do not deprecate until every
-/// pre-patch run has finished.
+/// Produces history with the screening patch but without the welcome-email patch.
 /// </summary>
 [Workflow("OnboardingWorkflow")]
 public class OnboardingWorkflowBeforeEmailPatch
@@ -46,8 +28,7 @@ public class OnboardingWorkflowBeforeEmailPatch
         await Workflow.ExecuteActivityAsync(
             (OnboardingActivities act) => act.QueueWelcomeLetter(input.AccountId), activity);
 
-        // Same position as the live workflow's, so a history recorded here parks at the
-        // same point and the replay below compares like with like.
+        // Timer position must match the live workflow's command order for replay.
         if (input.HoldOpenFor > TimeSpan.Zero)
         {
             await Workflow.DelayAsync(input.HoldOpenFor);

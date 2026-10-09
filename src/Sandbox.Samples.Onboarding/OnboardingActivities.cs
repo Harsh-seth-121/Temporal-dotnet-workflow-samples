@@ -4,13 +4,7 @@ using Microsoft.Extensions.Logging;
 using Temporalio.Activities;
 
 /// <summary>
-/// The parent's steps. Each one logs and returns; nothing here talks to a real
-/// system, because the point of the sample is the shape of the workflow around them.
-///
-/// There are two pairs worth knowing about. <see cref="ScreenAccount"/> is the step a
-/// patch introduced, and <see cref="SendWelcomeEmail"/> replaced
-/// <see cref="QueueWelcomeLetter"/> under a second one. The workflow is where those
-/// decisions live; see OnboardingWorkflow.workflow.cs.
+/// Provides account setup activities for <see cref="OnboardingWorkflow"/>.
 /// </summary>
 public class OnboardingActivities
 {

@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging;
 using Temporalio.Activities;
 
 /// <summary>
-/// The child's one step, run on a timer for as long as the monitor lives.
+/// Provides account-health checks for <see cref="AccountMonitorWorkflow"/>.
 /// </summary>
 public class MonitorActivities
 {

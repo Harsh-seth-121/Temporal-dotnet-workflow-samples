@@ -8,14 +8,6 @@ using Xunit;
 
 public class OnboardingWorkflowTests
 {
-    /// <summary>
-    /// The monitor is named after its parent and is still running once the parent has
-    /// finished.
-    ///
-    /// The second half is the one that earns its keep. ParentClosePolicy defaults to
-    /// Terminate, so dropping the Abandon line leaves code that compiles, starts a
-    /// child, completes, and quietly kills it. Nothing else in this repo would notice.
-    /// </summary>
     [Fact]
     public async Task RunAsync_LeavesTheMonitorRunningUnderTheParentsId()
     {
@@ -30,9 +22,7 @@ public class OnboardingWorkflowTests
                 .AddAllActivities(new OnboardingActivities())
                 .AddAllActivities(new MonitorActivities()));
 
-        // An hour between checks, so the monitor is parked on its first timer rather
-        // than racing the assertions. Nothing waits that long: the parent does not
-        // block on the child, and the test never advances the clock.
+        // Keeps the monitor running without racing the status assertion.
         var settings = new MonitorSettings(
             CheckInterval: TimeSpan.FromHours(1),
             CycleLength: TimeSpan.FromHours(8),
@@ -61,22 +51,13 @@ public class OnboardingWorkflowTests
             cancel);
     }
 
-    /// <summary>
-    /// A fresh run takes the patched path, because Patched returns true when there is
-    /// no history telling it otherwise. This is the easy half of the patch; the hard
-    /// half is in OnboardingPatchReplayTests.
-    /// </summary>
     [Fact]
     public async Task RunAsync_WelcomesANewRunByEmail()
     {
         var cancel = TestContext.Current.CancellationToken;
         await using var env = await WorkflowEnvironment.StartLocalAsync();
 
-        // Both arms are counted, not just the one that should stay at zero. Asserting
-        // only the absence of the letter would pass against a workflow that took the
-        // patched branch and then called nothing at all, which is what deleting the
-        // SendWelcomeEmail line leaves behind. Each counter is named after the activity
-        // it stands in for, so the workflow cannot reach the real one instead.
+        // Counts both branch activities to detect a missing email or unexpected letter.
         var emails = 0;
         var letters = 0;
 
@@ -94,9 +75,6 @@ public class OnboardingWorkflowTests
             return accountId;
         }
 
-        // Registered one by one rather than with AddAllActivities, because each counter
-        // shares a name with the activity it replaces and the worker refuses a
-        // duplicate. The first three are the real thing; only the branch is swapped.
         var real = new OnboardingActivities();
 
         using var worker = new TemporalWorker(

@@ -4,11 +4,7 @@ using Sandbox.Abstractions;
 using Temporalio.Worker;
 
 /// <summary>
-/// Wires this sample into the shared worker. Discovered by reflection at startup.
-///
-/// Both workflows are registered on the one task queue. The parent starts the child
-/// without naming a queue, so the child inherits this one and the same worker runs
-/// both halves.
+/// Registers the onboarding workflows and activities with the shared worker.
 /// </summary>
 public class OnboardingSampleModule : ISampleModule
 {

@@ -9,15 +9,7 @@ using Xunit;
 public class AccountMonitorWorkflowTests
 {
     /// <summary>
-    /// State survives every continue-as-new boundary.
-    ///
-    /// Runs on the time-skipping environment, so three hours of production-shaped
-    /// timers cost no wall clock. Time skipping is not thread safe, so this test owns
-    /// its environment rather than sharing one.
-    ///
-    /// The assertion is the running total. A monitor that restarted from zero at each
-    /// boundary would still finish, still report the right number of cycles, and still
-    /// look correct in the UI; only the total gives it away.
+    /// Totals survive every continue-as-new boundary.
     /// </summary>
     [Fact]
     public async Task RunAsync_CarriesItsTotalsAcrossEveryCycle()
@@ -31,8 +23,6 @@ public class AccountMonitorWorkflowTests
                 .AddWorkflow<AccountMonitorWorkflow>()
                 .AddAllActivities(new MonitorActivities()));
 
-        // The production shape, bounded so it ends: a check every quarter hour, a new
-        // run every hour, three runs.
         var settings = new MonitorSettings(
             CheckInterval: TimeSpan.FromMinutes(15),
             CycleLength: TimeSpan.FromHours(1),
@@ -56,11 +46,6 @@ public class AccountMonitorWorkflowTests
             cancel);
     }
 
-    /// <summary>
-    /// A continue-as-new keeps the workflow ID and changes only the run ID. That is
-    /// what lets the parent name the child once and have the name stay true for the
-    /// monitor's whole life, so it is asserted rather than assumed.
-    /// </summary>
     [Fact]
     public async Task RunAsync_KeepsItsWorkflowIdAndChangesOnlyTheRunId()
     {
@@ -91,7 +76,7 @@ public class AccountMonitorWorkflowTests
                 var firstRunId = handle.ResultRunId;
                 await handle.GetResultAsync();
 
-                // Fetched by ID with no run ID, so this is whatever run is current now.
+                // A handle without a run ID resolves to the current run.
                 var current = await env.Client.GetWorkflowHandle(workflowId).DescribeAsync();
 
                 Assert.Equal(workflowId, current.Id);
@@ -100,18 +85,6 @@ public class AccountMonitorWorkflowTests
             cancel);
     }
 
-    /// <summary>
-    /// A non-positive check interval fails the monitor immediately instead of spinning.
-    ///
-    /// Without the guard this is not a slow monitor, it is a runaway. Counting checks
-    /// rather than timing them means a cycle lasts as long as its delays, so a zero
-    /// interval gives a cycle no duration at all, and an unbounded monitor continues as
-    /// new for as fast as the cluster will serve it. Measured before the guard existed:
-    /// five nominal one-hour cycles finished in under a second.
-    ///
-    /// MaxCycles is 5 here rather than 0 deliberately. If the guard is ever removed this
-    /// test must fail, not hang the suite forever.
-    /// </summary>
     [Fact]
     public async Task RunAsync_RejectsANonPositiveCheckInterval()
     {
@@ -124,6 +97,7 @@ public class AccountMonitorWorkflowTests
                 .AddWorkflow<AccountMonitorWorkflow>()
                 .AddAllActivities(new MonitorActivities()));
 
+        // A finite cycle limit prevents a regression from running indefinitely.
         var settings = new MonitorSettings(
             CheckInterval: TimeSpan.Zero,
             CycleLength: TimeSpan.FromHours(1),
