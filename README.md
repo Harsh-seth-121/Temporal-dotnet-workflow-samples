@@ -115,179 +115,110 @@ If a module cannot be loaded or constructed, the worker refuses to start and say
 which one. That is deliberate: a silently skipped module registers no workflows,
 and the only symptom would be a workflow sitting unclaimed until it times out.
 
-## Changing a workflow that is already running
+## Changing a running workflow
 
-```sh
-make onboard           # set an account up, then leave a monitor watching it
-```
+`OnboardingWorkflow` sets up an account, starts `AccountMonitorWorkflow`, and exits.
+The parent demonstrates patching. The monitor demonstrates continue-as-new and a child
+workflow that outlives its parent.
 
-`OnboardingWorkflow` runs four activities and finishes in about a second.
-`AccountMonitorWorkflow` watches the account afterwards and runs for as long as you let
-it. The two exist to show the two problems that only appear once workflows are long
-enough to outlive a deploy, and they solve them differently.
+### Patch the parent
 
-### The parent patches
-
-A worker that restarts replays every open workflow from the beginning. If the new code
-issues different commands than the history records, the run stops with a non-determinism
-error and stays stopped. Patching is how you change a workflow anyway:
+When a worker processes a workflow task, it replays the execution's event history. A
+code change that emits a different command sequence causes non-determinism.
+`Workflow.Patched` preserves the old sequence for pre-patch histories:
 
 ```csharp
-if (Workflow.Patched("email-welcome-instead-of-letter"))   // new runs
+if (Workflow.Patched("email-welcome-instead-of-letter"))   // new or marked histories
 {
     await SendWelcomeEmail();
 }
-else                                                       // runs already in flight
+else                                                       // pre-patch histories without the marker
 {
     await QueueWelcomeLetter();
 }
 ```
 
-There are three phases, and `OnboardingWorkflow` is sitting in two of them at once so you
-can see the order in one file:
+The sample contains one patch in phase 1 and another in phase 2:
 
 | Phase | Call | Where this sample is |
 |---|---|---|
 | 1, patch in | `if (Workflow.Patched(id))`, both branches | `email-welcome-instead-of-letter` |
 | 2, deprecate | `Workflow.DeprecatePatch(id)`, old branch gone | `screen-before-provision` |
-| 3, remove | nothing | neither, yet |
+| 3, remove | nothing | none |
 
-You move from one phase to the next only when no run that needs the old behaviour is
-still open. The two moves ask different questions, so they are two different queries:
+These visibility queries find running executions that may still need the previous
+phase:
 
 ```sh
-# 1 to 2, before deprecating: any open run that has NOT recorded the marker still
-# needs the else branch.
+# Before phase 2: find open runs that have not recorded this marker.
 temporal workflow list --query 'WorkflowType = "OnboardingWorkflow"
   AND ExecutionStatus = "Running"
   AND TemporalChangeVersion NOT IN ("email-welcome-instead-of-letter")'
 
-# 2 to 3, before deleting the DeprecatePatch line: any open run still carrying the
-# marker needs the SDK to keep expecting it.
+# Before phase 3: find open runs that still carry this marker.
 temporal workflow list --query 'WorkflowType = "OnboardingWorkflow"
   AND ExecutionStatus = "Running"
   AND TemporalChangeVersion = "screen-before-provision"'
 ```
 
-`NOT IN`, not `IS NULL`, and the distinction is this workflow's own doing.
-`TemporalChangeVersion` is a list, and a run that started before the email patch has
-still recorded `["screen-before-provision"]`, so it is not null. Asking for null finds
-nothing and reads as "safe to deprecate" at the exact moment it is not. Verified
-against a run of the pre-patch code on this box: `IS NULL` missed it, `NOT IN` found
-it.
+Use `NOT IN` rather than `IS NULL` because `TemporalChangeVersion` is a list. A run
+created before one patch may still carry markers for another. These checks cover
+running executions in this sample. Before advancing a production patch, also account
+for visibility indexing delay and closed histories that may be queried or reset.
 
-`ExecutionStatus = "Running"` carries weight too. The parent finishes in about a
-second, so without it both queries return a wall of closed runs and answer a question
-nobody asked.
+`OnboardingPatchReplayTests` records history with the pre-email-patch implementation
+and replays the current workflow against it. This protects both the active and
+deprecated patch markers.
 
-Moving early is not untidy, it strands live workflows. `make test` holds the line here: a
-test runs a pre-patch copy of the workflow, captures the history it writes, and replays
-today's code against it. Delete the `else` branch and that test reports
-`Activity type of scheduled event 'QueueWelcomeLetter' does not match activity type of
-activity command 'SendWelcomeEmail'`, which is the error your users would otherwise find.
+`make onboard PAUSE=90s` holds an execution after the patch branch so its history
+records the selected path before a later workflow task replays it.
 
-To watch the patch decide on the real box rather than in a test, you have to hand it a
-history worth reading, and only pre-patch code writes one. `PAUSE=` parks the run just
-after the welcome step, which is where that history exists:
+### Continue the monitor as new
 
-```sh
-# terminal 1. Cut OnboardingWorkflow.workflow.cs back to its pre-patch shape: replace
-# Workflow.Patched(EmailPatch) with false, and drop the email arm of the if so only
-# QueueWelcomeLetter is left. Keeping the local as false rather than deleting it is
-# what keeps the file compiling, since the result still reports it. Leave
-# DeprecatePatch alone.
-docker compose --env-file deploy/.env -f deploy/docker-compose.yml stop worker
-make worker
+Between cycles, `AccountMonitorWorkflow` carries its state into a new run with empty
+event history. The final bounded cycle returns normally, and server history limits can
+trigger an earlier rollover. This caps history growth and bounds replay compatibility
+to the active run.
 
-# terminal 2. The run queues a letter, then parks.
-make onboard PAUSE=90s
-
-# terminal 1 again, while it waits. Ctrl-C FIRST, then restore the file and start
-# again. With nothing polling, the timer can fire while you work: the task waits in
-# the queue instead of being picked up by the code you are trying to replace.
-make worker
-```
-
-The parked run wakes on the restored worker, replays, finds no marker for the email
-patch in its history, and `make onboard` prints `welcomed by letter` from code whose
-default is email. That is the else branch doing its job. Run `make onboard` once more
-and it prints `welcomed by email`, because a fresh run has no history to contradict the
-patch.
-
-Both orderings matter. Stopping the container worker first is not optional: leave it up
-and two workers poll `sandbox` with different builds, the parked run goes to whichever
-one claims it, and the result is a coin flip that reads like a flaky SDK. And Ctrl-C
-before restoring, not after, because the cut-down worker would otherwise finish the run
-itself when the timer fires and print `welcomed by letter` too. That is the same output
-for the opposite reason, and nothing on screen would tell you which one you got. Put the
-container back with `make up` when you are done.
-
-The pause is read from the workflow's input, so it is fixed in history and replays the
-same way, and a run started without it records no timers at all. Its position is
-load-bearing: a run parked before the branch has already finished replaying by the time
-it reaches `Patched`, so the answer would always be yes.
-
-### The child continues as new instead
-
-`AccountMonitorWorkflow` has no patches, deliberately. Every cycle it closes its current
-run and opens a fresh one carrying its state forward, so each boundary resets what the
-next deploy has to stay compatible with.
-
-That is a bound, not an exemption. A run already mid-cycle gets replayed by the new
-worker on its very next workflow task, same as any other open workflow, and a change
-that run's history cannot account for fails that task and keeps failing it rather than
-waiting politely for the boundary. What cycling buys is a short, known window: hold the
-old workers until it turns over, or patch the change anyway. An hourly cycle makes
-waiting cheap, which is the reason to cycle hourly. The same mechanism caps history
-growth, which a run that never ends otherwise cannot do.
-
-A wedged run is not a lost one. Temporal keeps retrying the failed workflow task, so
-deploying the old code back recovers it with nothing else to do. That was measured here
-rather than assumed: a monitor wedged mid-cycle by an added activity sat failing, then
-completed normally once the change was rolled back.
-
-The parent cannot make that trade. Its whole life is shorter than one deploy, so it has
-nowhere to put a boundary.
+An in-progress run must still remain replay-compatible until its next boundary. An
+incompatible deployment repeatedly fails its workflow task; restore compatible code or
+patch the change to recover it.
 
 | | Shipped default | Production shape |
 |---|---|---|
 | Check interval | 15s | 15m |
-| Cycle length | 2m, so 8 checks | 1h |
+| Cycle length | Up to 2m or 8 checks | Up to 1h |
 | Cycles | 3, about 6 minutes | unlimited |
 
-The defaults are sized to watch. `MonitorSettings.Production` in the sample carries the
-other column, and the numbers travel in the workflow's input rather than in `deploy/.env`.
+The shipped defaults keep the demo short. `MonitorSettings.Production` provides the
+long-running settings. Both travel in workflow input, not `deploy/.env`.
 
-### The child outlives the parent
+### Let the monitor outlive onboarding
 
-The parent starts the monitor and does not wait for it:
+The parent waits for the monitor to start, but not to complete:
 
 ```csharp
-Workflow.StartChildWorkflowAsync(..., new ChildWorkflowOptions
+await Workflow.StartChildWorkflowAsync(..., new ChildWorkflowOptions
 {
     Id = $"{Workflow.Info.WorkflowId}-monitor",
     ParentClosePolicy = ParentClosePolicy.Abandon,
 });
 ```
 
-`ParentClosePolicy` defaults to `Terminate`. Without that line the monitor is killed the
-instant the parent returns, and the only symptom is a child that is somehow never
-running. The child's ID is the parent's with a suffix, so either one finds the other, and
-continue-as-new never changes a workflow ID, so that stays true for the monitor's whole
-life.
+`ParentClosePolicy` defaults to `Terminate`. `Abandon` keeps the monitor running after
+onboarding completes. The monitor ID uses the parent ID plus `-monitor`, and
+continue-as-new preserves that workflow ID across runs.
 
-`make onboard` prints both IDs. Follow it:
+`make onboard` prints both IDs. Inspect them with:
 
 ```sh
 temporal workflow describe --workflow-id <parent>            # Completed
 temporal workflow describe --workflow-id <parent>-monitor    # Running, new run ID each cycle
 ```
 
-A monitor is server state, not a container, so it keeps running after `make down`
-returns. Nothing times a running workflow out: retention governs how long closed
-histories are kept, and continue-as-new keeps opening fresh runs. The shipped default is
-bounded at three cycles so a demo does not outlive the session. `MonitorSettings.Production`
-has no bound at all, so `make reset` or a terminate is the only thing that clears one.
+The open execution remains durable while containers are stopped and resumes after the
+Temporal server and worker restart. The sample sets no execution timeout. Demo settings
+stop after three cycles; production settings have no cycle limit.
 
 ## Load testing
 
