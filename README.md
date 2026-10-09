@@ -76,6 +76,7 @@ wrong rather than that the panel is broken.
 | `make load MODE=demo` | Start the load generator; also `bench` and `soak` |
 | `make unload` | Stop the load generator, leaving the stack up |
 | `make run NAME=you` | Run one workflow and print the result |
+| `make onboard` | Run the patching and child-workflow sample; `PAUSE=` holds a run open |
 | `make worker` | Run the worker on the host instead of in a container |
 | `make test` | Run the test suite |
 | `make logs` | Follow logs from every service |
@@ -86,14 +87,16 @@ your editor against the containerized server, skip the image rebuild.
 ## Layout
 
 ```
-src/Sandbox.Abstractions/     ISampleModule, shared config
-src/Sandbox.Samples.Hello/    HelloWorkflow and its activity
-src/Sandbox.Worker/           host, runtime, metrics, sample discovery
-src/Sandbox.Client/           starter
-deploy/                       compose file, Prometheus and Grafana config
-docker/                       worker image
-scripts/                      startup gate, smoke test, URL banner
-tests/                        workflow tests
+src/Sandbox.Abstractions/        ISampleModule, shared config
+src/Sandbox.Samples.Hello/       HelloWorkflow and its activity
+src/Sandbox.Samples.Onboarding/  parent with patches, abandoned long-running child
+src/Sandbox.Worker/              host, runtime, metrics, sample discovery
+src/Sandbox.Client/              starter for HelloWorkflow
+src/Sandbox.Onboarding.Client/   starter for OnboardingWorkflow
+deploy/                          compose file, Prometheus and Grafana config
+docker/                          worker image
+scripts/                         startup gate, smoke test, URL banner
+tests/                           workflow tests
 ```
 
 ## Adding a sample
@@ -111,6 +114,111 @@ No change to the compose file, the worker image, or the metrics wiring.
 If a module cannot be loaded or constructed, the worker refuses to start and says
 which one. That is deliberate: a silently skipped module registers no workflows,
 and the only symptom would be a workflow sitting unclaimed until it times out.
+
+## Changing a running workflow
+
+`OnboardingWorkflow` sets up an account, starts `AccountMonitorWorkflow`, and exits.
+The parent demonstrates patching. The monitor demonstrates continue-as-new and a child
+workflow that outlives its parent.
+
+### Patch the parent
+
+When a worker processes a workflow task, it replays the execution's event history. A
+code change that emits a different command sequence causes non-determinism.
+`Workflow.Patched` preserves the old sequence for pre-patch histories:
+
+```csharp
+if (Workflow.Patched("email-welcome-instead-of-letter"))   // new or marked histories
+{
+    await SendWelcomeEmail();
+}
+else                                                       // pre-patch histories without the marker
+{
+    await QueueWelcomeLetter();
+}
+```
+
+The sample contains one patch in phase 1 and another in phase 2:
+
+| Phase | Call | Where this sample is |
+|---|---|---|
+| 1, patch in | `if (Workflow.Patched(id))`, both branches | `email-welcome-instead-of-letter` |
+| 2, deprecate | `Workflow.DeprecatePatch(id)`, old branch gone | `screen-before-provision` |
+| 3, remove | nothing | none |
+
+These visibility queries find running executions that may still need the previous
+phase:
+
+```sh
+# Before phase 2: find open runs that have not recorded this marker.
+temporal workflow list --query 'WorkflowType = "OnboardingWorkflow"
+  AND ExecutionStatus = "Running"
+  AND TemporalChangeVersion NOT IN ("email-welcome-instead-of-letter")'
+
+# Before phase 3: find open runs that still carry this marker.
+temporal workflow list --query 'WorkflowType = "OnboardingWorkflow"
+  AND ExecutionStatus = "Running"
+  AND TemporalChangeVersion = "screen-before-provision"'
+```
+
+Use `NOT IN` rather than `IS NULL` because `TemporalChangeVersion` is a list. A run
+created before one patch may still carry markers for another. These checks cover
+running executions in this sample. Before advancing a production patch, also account
+for visibility indexing delay and closed histories that may be queried or reset.
+
+`OnboardingPatchReplayTests` records history with the pre-email-patch implementation
+and replays the current workflow against it. This protects both the active and
+deprecated patch markers.
+
+`make onboard PAUSE=90s` holds an execution after the patch branch so its history
+records the selected path before a later workflow task replays it.
+
+### Continue the monitor as new
+
+Between cycles, `AccountMonitorWorkflow` carries its state into a new run with empty
+event history. The final bounded cycle returns normally, and server history limits can
+trigger an earlier rollover. This caps history growth and bounds replay compatibility
+to the active run.
+
+An in-progress run must still remain replay-compatible until its next boundary. An
+incompatible deployment repeatedly fails its workflow task; restore compatible code or
+patch the change to recover it.
+
+| | Shipped default | Production shape |
+|---|---|---|
+| Check interval | 15s | 15m |
+| Cycle length | Up to 2m or 8 checks | Up to 1h |
+| Cycles | 3, about 6 minutes | unlimited |
+
+The shipped defaults keep the demo short. `MonitorSettings.Production` provides the
+long-running settings. Both travel in workflow input, not `deploy/.env`.
+
+### Let the monitor outlive onboarding
+
+The parent waits for the monitor to start, but not to complete:
+
+```csharp
+await Workflow.StartChildWorkflowAsync(..., new ChildWorkflowOptions
+{
+    Id = $"{Workflow.Info.WorkflowId}-monitor",
+    ParentClosePolicy = ParentClosePolicy.Abandon,
+});
+```
+
+`ParentClosePolicy` defaults to `Terminate`. `Abandon` keeps the monitor running after
+onboarding completes. The monitor ID uses the parent ID plus `-monitor`, and
+continue-as-new preserves that workflow ID across runs.
+
+`make onboard` prints both IDs. Inspect them with:
+
+```sh
+temporal workflow describe --workflow-id <parent>            # Completed
+temporal workflow describe --workflow-id <parent>-monitor    # Running, new run ID each cycle
+```
+
+The open execution remains durable while containers are stopped and resumes after the
+Temporal server and worker restart. The sample sets no execution timeout. Demo settings
+stop after three cycles; production settings have no cycle limit.
 
 ## Load testing
 
